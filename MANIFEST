@@ -18,6 +18,7 @@ t/over-qq.t
 t/masklen.t
 t/v4-base.t
 t/v4-cidr.t
+t/v6-base.t
 t/over-arr.t
 t/v4-range.t
 t/v4-badnm.t

@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# $Id: IP.pm,v 1.5 2002/10/31 21:32:20 lem Exp $
+# $Id: IP.pm,v 1.6 2002/12/10 17:14:02 lem Exp $
 
 package NetAddr::IP;
 
@@ -8,7 +8,7 @@ package NetAddr::IP;
 
 =head1 NAME
 
-NetAddr::IP - Manages IPv4 addresses and subnets
+NetAddr::IP - Manages IPv4 and IPv6 addresses and subnets
 
 =head1 SYNOPSIS
 
@@ -45,7 +45,7 @@ use Socket;
 use strict;
 use warnings;
 
-our $VERSION = '3.14';
+our $VERSION = '3.14_1';
 
 				#############################################
 				# These are the overload methods, placed here
@@ -317,6 +317,19 @@ sub _to_quad ($) {
 		vec($vec, 3, 8);
 }
 
+sub _to_ipv6 ($) {
+    my $vec = shift;
+    my $r = '';
+
+    foreach (0..3) {
+	$r .= ':' . sprintf("%02x%02x:%02x%02x",
+			    vec($vec, 4*$_, 8), vec($vec, 4*$_ + 1, 8),
+			    vec($vec, 4*$_ + 2, 8), vec($vec, 4*$_ + 3, 8));
+    }
+    $r =~ s/^://;
+    return $r;
+}
+
 sub do_prefix ($$$) {
     my $mask	= shift;
     my $faddr	= shift;
@@ -351,7 +364,32 @@ sub _parse_mask ($$) {
 
     my $bmask	= '';
 
-    if ($mask eq 'default' or $mask eq 'any') {
+    if ($bits == 128) {
+	if (grep($mask eq $_ , qw(unspecified loopback))) {
+	    for (0..3) {
+	    	vec($bmask, $_, 32) = 0xFFFFFFFF;
+	    }
+	}
+	elsif ($mask =~ /^(\d+)$/ && $1 <= 128) {
+	    foreach (0..3) {
+		if ($mask >= 32*($_ + 1)) {
+		    vec($bmask, $_, 32) = 0xFFFFFFFF;
+		}
+		elsif ($mask > 32*$_) {
+		    vec($bmask, $_, 32) = 0xFFFFFFFF;
+		    vec($bmask, $_, 32) <<= (32*($_ + 1) - $mask);
+		} 
+		else {
+			vec($bmask, $_, 32) = 0x0;
+		}
+	    }
+	}
+	else {
+	     $bmask = undef;
+	}
+        return $bmask;
+    }
+    elsif ($mask eq 'default' or $mask eq 'any') {
 	vec($bmask, 0, $bits) = 0x0;
     }
     elsif ($mask eq 'broadcast' or $mask eq 'host') {
@@ -591,6 +629,69 @@ sub _v4 ($$$) {
     return { addr => $addr, mask => $mask, bits => 32 };
 }
 
+sub expand_v6 ($) {
+    my $pat = shift;
+
+    if (length($pat) < 4) {
+	$pat = ('0' x (4 - length($pat))) . $pat;
+    }
+    return $pat;
+}
+
+sub _v6_part ($$$) {
+    my $addr = shift;
+    my $four = shift;
+    my $n = shift;
+
+    my($a, $b);
+
+    return undef unless length($four) == 4;
+    $four =~ /^(.{2})(.{2})/;
+    ($a, $b) = ($1, $2);
+
+    vec($addr, 2*$n, 8) = hex($a);
+    vec($addr, 2*$n + 1, 8) = hex($b);
+
+    return $addr;
+}
+
+sub _v6 ($$$) {
+    my $ip	= lc shift;
+    my $mask	= shift;
+    my $present	= shift;
+
+    my $addr = '';
+    my $colons; 
+    my $expanded;
+    my @ip;
+
+    if ($ip eq 'unspecified') {
+	$ip = '::';
+    }
+    elsif ($ip eq 'loopback') {
+	$ip = '::1';
+    }
+    elsif ($ip =~ /:::/ || $ip =~ /::.*::/) {
+	return undef;
+    }
+    return undef unless $ip =~ /^[\da-f\:]+$/i;
+
+    $colons = ($ip =~ tr/:/:/);
+    return undef unless $colons >= 2 && $colons <= 7;
+    $expanded = ':0' x (9 - $colons);
+    $ip =~ s/::/$expanded/;
+    $ip = '0' . $ip if $ip =~ /^:/;
+    # .:.:.:.:.:.:.:.
+    @ip = split(/:/, $ip);
+    grep($_ = expand_v6($_), @ip);;
+    for (0..$#ip) {
+    	$addr = _v6_part($addr, $ip[$_], $_);
+        return undef unless defined $addr;
+    }
+
+    return { addr => $addr, mask => $mask, bits => 128 };
+}
+
 sub new4 ($$;$) {
     new($_[0], $_[1], $_[2]);
 }
@@ -603,7 +704,7 @@ sub new4 ($$;$) {
 
 =over
 
-=item C<-E<gt>new([$addr, [ $mask ]])>
+=item C<-E<gt>new([$addr, [ $mask|IPv6 ]])>
 
 This method creates a new IPv4 address with the supplied address in
 C<$addr> and an optional netmask C<$mask>, which can be omitted to get
@@ -622,6 +723,9 @@ specified for them.
 
 If called with no arguments, 'default' is assumed.
 
+IPv6 addresses according to RFC 1884 are also supported, except IPv4
+compatible IPv6 addresses.
+
 =cut
 
 sub new ($$;$) {
@@ -629,9 +733,11 @@ sub new ($$;$) {
     my $class	= ref($type) || $type || "NetAddr::IP";
     my $ip	= lc $_[1];
     my $hasmask	= 1;
+    my $bits;
     my $mask;
 
     $ip = 'default' unless defined $ip;
+    $bits = $ip =~ /:/ ? 128 : 32;
 
     if (@_ == 2) {
 	if ($ip =~ m!^(.+)/(.+)$!) {
@@ -645,20 +751,32 @@ sub new ($$;$) {
     }
 
     if (defined $_[2]) {
-	$mask 		= _parse_mask $_[2], 32;
+	if ($_[2] =~ /^ipv6$/i) {
+	    if (grep { $ip eq $_ } (qw(unspecified loopback))) {
+		$bits	= 128;
+	    	$mask	= _parse_mask $ip, $bits;
+	    }
+	    else {
+		return undef;
+	   }
+	}
+	else {
+	    $mask	= _parse_mask $_[2], $bits;
+	}
 	return undef unless defined $mask;
     }
     elsif (defined $mask) {
-	$mask 		= _parse_mask $mask, 32;
+	$mask 		= _parse_mask $mask, $bits;
 	return undef unless defined $mask;
     }
     else {
 	$hasmask	= 0;
-	$mask 		= _parse_mask 32, 32;
+	$mask 		= _parse_mask $bits, $bits;
 	return undef unless defined $mask;
     }
 
-    my $self = _v4($ip, $mask, $hasmask);
+    my $self = $bits == 32 ? _v4($ip, $mask, $hasmask)
+			   : _v6($ip, $mask, $hasmask);
 
     return undef unless $self;
 
@@ -729,7 +847,26 @@ address.
 
 sub addr ($) {
     my $self	= shift;
-    _to_quad $self->{addr};
+    $self->{bits} == 32 ? _to_quad $self->{addr}
+			: _to_ipv6 $self->{addr};
+}
+
+sub _compact ($) {
+    my $addr = shift;
+
+    $addr =~ s/(^|:)0{1,3}/${1}/g;
+    # Not optimized for the biggest :0 sequence to collapse
+    $addr =~ s/((^|:)0)+/:/;
+    # unspecified :-(
+    $addr .= ':' if $addr eq ':';
+
+    return $addr;
+}
+
+sub compact_addr ($) {
+    my $self	= shift;
+    $self->{bits} == 32 ? _to_quad $self->{addr}
+			: _compact _to_ipv6 $self->{addr};
 }
 
 =pod
@@ -742,7 +879,8 @@ Returns a scalar with the mask as a dotted-quad.
 
 sub mask ($) {
     my $self	= shift;
-    _to_quad $self->{mask};
+    $self->{bits} == 32 ? _to_quad $self->{mask}
+			: _to_ipv6 $self->{mask};
 }
 
 =pod
@@ -896,6 +1034,7 @@ wildcard translation of the mask.
 
 sub wildcard ($) {
     my $self	= shift;
+    return undef if $self->{bits} > 32;
     return wantarray() ? ($self->addr, _to_quad ~$self->{mask}) :
 	_to_quad ~$self->{mask};
 			      
@@ -1223,7 +1362,7 @@ None by default.
 
 =head1 HISTORY
 
-$Id: IP.pm,v 1.5 2002/10/31 21:32:20 lem Exp $
+$Id: IP.pm,v 1.6 2002/12/10 17:14:02 lem Exp $
 
 =over
 
@@ -1689,11 +1828,35 @@ difference.
 
 =back
 
+=item 3.14_1
+
+This is an interim release just to incorporate the v6 patches
+contributed.  No extensive testing has been done with this support
+yet. More tests are needed.
+
+=over
+
+=item *
+
+Preliminary support for IPv6 contributed by Kadlecsik Jozsi
+E<lt>kadlec at sunserv.kfki.huE<gt>. Thanks a lot!
+
+=item *
+
+IP.pm and other files are enconded in ISO-8859-1 (Latin1) so that I
+can spell my name properly.
+
+=item *
+
+Tested under Perl 5.8.0, no surprises found.
+
+=back
+
 =back
 
 =head1 AUTHOR
 
-Luis E. Munoz <luismunoz@cpan.org>
+Luis E. Muñoz <luismunoz@cpan.org>
 
 =head1 WARRANTY
 
@@ -1702,7 +1865,7 @@ so by using it you accept any and all the liability.
 
 =head1 LICENSE
 
-This software is (c) Luis E. Munoz.  It can be used under the terms of
+This software is (c) Luis E. Muñoz.  It can be used under the terms of
 the perl artistic license provided  that proper credit for the work of
 the  author is  preserved in  the form  of this  copyright  notice and
 license for this module.
