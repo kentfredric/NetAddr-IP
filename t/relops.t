@@ -1,6 +1,6 @@
 use NetAddr::IP;
 
-# $Id: relops.t,v 1.3 2003/02/12 00:09:58 lem Exp $
+# $Id: relops.t,v 1.4 2003/10/08 06:46:02 lem Exp $
 
 BEGIN {
 @gt = (
@@ -31,22 +31,22 @@ BEGIN {
 use Test::More tests => @gt + @ngt + (2 * @cmp);
 
 for my $a (@gt) {
-    my $a_ip = new NetAddr::IP $a->[0];
-    my $b_ip = new NetAddr::IP $a->[1];
+    $a_ip = new NetAddr::IP $a->[0];
+    $b_ip = new NetAddr::IP $a->[1];
 
     ok($a_ip > $b_ip, "$a_ip > $b_ip");
 }
 
 for my $a (@ngt) {
-    my $a_ip = new NetAddr::IP $a->[0];
-    my $b_ip = new NetAddr::IP $a->[1];
+    $a_ip = new NetAddr::IP $a->[0];
+    $b_ip = new NetAddr::IP $a->[1];
 
     ok(!($a_ip > $b_ip), "$a_ip !> $b_ip");
 }
 
-for my $a (@cmp) {
-    my $a_ip = new NetAddr::IP $a->[0];
-    my $b_ip = new NetAddr::IP $a->[1];
+for $a (@cmp) {
+    $a_ip = new NetAddr::IP $a->[0];
+    $b_ip = new NetAddr::IP $a->[1];
 
     is($a_ip <=> $b_ip, $a->[2], "$a_ip <=> $b_ip is $a->[2]");
     is($a_ip cmp $b_ip, $a->[2], "$a_ip cmp $b_ip is $a->[2]");

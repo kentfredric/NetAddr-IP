@@ -1,14 +1,16 @@
 use NetAddr::IP;
 
-# $Id: v4-new.t,v 1.5 2002/12/27 20:37:55 lem Exp $
+# $Id: v4-new.t,v 1.7 2003/10/08 06:46:02 lem Exp $
 
 BEGIN {
 our @a = (
-	 [ 'localhost', '127.0.0.1' ],
-	 [ 0x01010101, '1.1.1.1' ],
-	 [ 1, '0.0.0.1' ],
-	 [ 'default', '0.0.0.0' ],
-	 [ 'any', '0.0.0.0' ],
+	  [ 'localhost', '127.0.0.1' ],
+	  [ 0x01010101, '1.1.1.1' ],
+	  [ 1, '1.0.0.0' ],	# Because it will have a mask. 0.0.0.1 ow
+	  [ 'default', '0.0.0.0' ],
+	  [ 'any', '0.0.0.0' ],
+	  [-809041407, '207.199.2.1'],
+	  [3485925889, '207.199.2.1'],
 	);
 
 our @m = (
@@ -40,10 +42,10 @@ ok(! defined NetAddr::IP->new('256.256.256.256'), "Invalid IP returns undef");
 for my $a (@a) {
     for my $m (@m) {
 	my $ip = new NetAddr::IP $a->[0], $m->[0];
-	is($ip->addr, $a->[1]);
-	is($ip->mask, $m->[1]);
-	is($ip->bits, 32);
-	is($ip->version, 4);
+	is($ip->addr, $a->[1], "$a->[0] / $m->[0] is $a->[1]");
+	is($ip->mask, $m->[1], "$a->[0] / $m->[0] is $m->[1]");
+	is($ip->bits, 32, "$a->[0] / $m->[0] is 32 bits wide");
+	is($ip->version, 4, "$a->[0] / $m->[0] is version 4");
     }
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# $Id: IP.pm,v 1.11 2003/02/12 00:09:57 lem Exp $
+# $Id: IP.pm,v 1.13 2003/10/09 00:12:21 lem Exp $
 
 package NetAddr::IP;
 
@@ -35,8 +35,6 @@ operations are supported, as described below:
 
 Many operators have been overloaded, as described below:
 
-=over
-
 =cut
 
 require 5.005_62;
@@ -50,7 +48,7 @@ our @EXPORT_OK = qw(Compact);
 
 our @ISA = qw(Exporter);
 
-our $VERSION = '3.14_3';
+our $VERSION = '3.15';
 
 				#############################################
 				# These are the overload methods, placed here
@@ -134,6 +132,8 @@ use overload
 
 =pod
 
+=over
+
 =item B<Assignment (C<=>)>
 
 Has been optimized to copy one NetAddr::IP object to another very quickly.
@@ -212,14 +212,41 @@ sub plus {
 
     return $ip unless $const;
 
+    my $b = $ip->{bits};
     my $a = $ip->{addr};
     my $m = $ip->{mask};
-    my $b = $ip->{bits};
-
+    
     my $hp = "$a" & ~"$m";
     my $np = "$a" & "$m";
 
-    vec($hp, 0, $b) += $const;
+    if ($b == 128)		# v6?
+    {
+	use Math::BigInt;
+
+	my $num = new Math::BigInt 0;
+
+	for (0 .. 15)
+	{
+	    $num <<= 8;
+	    $num |= vec($hp, $_, 8);
+	}
+
+#  	warn "# add - before badd($const): $num\n";
+	$num->badd($const);
+#  	warn "# add - after badd($const): $num\n";
+
+	for (reverse 0 .. 15)
+	{
+	    my $x = new Math::BigInt $num;
+	    vec($hp, $_, 8) = $x & 0xFF;
+	    $num >>= 8;
+#  	    warn "# add - octet $_ == $num / ", vec($hp, $_, 8), "\n";
+	}
+    }
+    else			# v4
+    {
+	vec($hp, 0, $b) += $const;
+    }
 
     return _fnew NetAddr::IP [ "$np" | ("$hp" & ~"$m"), $m, $b];
 }
@@ -498,7 +525,17 @@ sub _v4 ($$$) {
 	vec($addr, 2, 8) = ($present ? $3 : 0);
 	vec($addr, 3, 8) = ($present ? 0 : $3);
     }
-    elsif ($ip =~ m/^([xb\d]+)$/) {
+    elsif ($ip =~ m/^([xb\d]+)$/ and $1 >= 0 and $1 < 255 and $present) 
+    {
+	vec($addr, 0, 8) = $1;
+	vec($addr, 1, 8) = 0;
+	vec($addr, 2, 8) = 0;
+	vec($addr, 3, 8) = 0;
+    }
+    elsif ($ip =~ m/^([xb\d]+)$/) 
+    {
+	my $num = $1;
+	$num += 2 ** 32 if $num < 0;
 	vec($addr, 0, 32) = $1;
     }
 
@@ -1088,6 +1125,8 @@ Returns true when C<$me> completely contains C<$other>. False is
 returned otherwise and C<undef> is returned if C<$me> and C<$other>
 are of different versions.
 
+Note that C<$me> and C<$other> must be C<NetAddr::IP> objects.
+
 =cut
 
 sub contains ($$) {
@@ -1121,6 +1160,8 @@ sub contains ($$) {
 
 The complement of C<-E<gt>contains()>. Returns true when C<$me> is
 completely con tained within C<$other>.
+
+Note that C<$me> and C<$other> must be C<NetAddr::IP> objects.
 
 =cut
 
@@ -1167,36 +1208,82 @@ sub splitref ($;$) {
     if (vec($self->{mask}, 0, $bits) 
 	<= vec($mask, 0, $bits))
     {
-
-	my $delta	= '';
 	my $num		= '';
 	my $v		= '';
 
-	vec($num, 0, $bits) = _ones $bits;
-	vec($num, 0, $bits) ^= vec($mask, 0, $bits);
-	vec($num, 0, $bits) ++;
-
-	vec($delta, 0, $bits) = (vec($self->{mask}, 0, $bits) 
-				 ^ vec($mask, 0, $bits));
-
-	my $net	= $self->network->{addr}; 
+	my $net	= $self->network->{addr};
 	$net = "$net" & "$mask";
 
-	my $to = $self->broadcast->{addr}; 
+	my $to = $self->broadcast->{addr};
 	$to = "$to" & "$mask";
 
-				# XXX - Note that most likely, 
-				# this loop will NOT work on IPv6... 
-				# $net, $to and $num might very well 
-				# be too large for most integer or 
-				# floating point representations.
-
-	for (my $i	= vec($net, 0, $bits);
-	     $i 	<= vec($to, 0, $bits);
-	     $i 	+= vec($num, 0, $bits))
+	if ($bits == 128)
 	{
-	    vec($v, 0, $bits) = $i;
-	    push @ret, $self->_fnew([ $v, $mask, $bits ]);
+	    use Math::BigInt;
+
+	    my $n = new Math::BigInt 0;
+	    my $t = new Math::BigInt 0;
+	    my $u = new Math::BigInt 0;
+	    my $x = '';
+
+	    for (0 .. 15)
+	    {
+		vec($num, $_, 8) = _ones 8;
+		vec($num, $_, 8) ^= vec($mask, $_, 8);
+		$n <<= 8;
+		$t <<= 8;
+		$u <<= 8;
+		$n |= vec($net, $_, 8);
+		$t |= vec($to, $_, 8);
+		$u |= vec($num, $_, 8);
+	    }
+
+#    	    warn "# splitref $self $mask\n";
+#      	    warn "# net = ", $self->network, "\n";
+#      	    warn "# bro = ", $self->broadcast, "\n";
+
+#      	    warn "# before, n = $n\n";
+#      	    warn "# before, t = $t\n";
+#      	    warn "# before, u = $u\n";
+
+	    $u++;
+	    my $i = $n->copy;
+
+	    do {
+		
+		my $j = $i->copy;
+
+#      		warn "# i = $i\n";
+#      		warn "# j = $j\n";
+#      		warn "# n = $n\n";
+#      		warn "# u = $u\n";
+#      		warn "# t = $t\n";
+#      		warn "###\n";
+
+		for (reverse 0 .. 15)
+		{
+		    vec($v, $_, 8) = ($j & 0xFF);
+		    $j >>= 8;
+		}
+
+		push @ret, $self->_fnew([ $v, $mask, $bits ]);
+#		warn "# add ", $self->_fnew([$v, $mask, $bits]), "\n";
+		$i += $u;
+	    } while ($i <= $t);
+	}
+	else
+	{
+	    vec($num, 0, $bits) = _ones $bits;
+	    vec($num, 0, $bits) ^= vec($mask, 0, $bits);
+	    vec($num, 0, $bits) ++;
+
+	    for (my $i	= vec($net, 0, $bits);
+		 $i 	<= vec($to, 0, $bits);
+		 $i 	+= vec($num, 0, $bits))
+	    {
+		vec($v, 0, $bits) = $i;
+		push @ret, $self->_fnew([ $v, $mask, $bits ]);
+	    }
 	}
     }
 
@@ -1245,6 +1332,8 @@ multiple times, these subnets would be returned. From 3.02 on, a more
 "correct" approach has been adopted and only one address would be
 returned.
 
+Note that C<$me> and all C<$addr>-n must be C<NetAddr::IP> objects.
+
 =cut
 
 sub compact {
@@ -1261,6 +1350,7 @@ As usual, a faster version of =item C<-E<gt>compact()> that returns a
 reference to a list. Note that this method takes a reference to a list
 instead.
 
+Note that C<$me> must be a C<NetAddr::IP> object.
 =cut
 
 sub compactref ($) {
@@ -1402,7 +1492,7 @@ None by default.
 
 =head1 HISTORY
 
-$Id: IP.pm,v 1.11 2003/02/12 00:09:57 lem Exp $
+$Id: IP.pm,v 1.13 2003/10/09 00:12:21 lem Exp $
 
 =over
 
@@ -1927,6 +2017,24 @@ wether 10.0/16 > 10/8. Certainly 255.255.0.0 > 255.0.0.0, but 2 ** 24
 are more hosts than 2 ** 16. I think we might use gt & friends for
 this semantic and make everyone happy, but I won't do anything else
 here without (significant) feedback.
+
+=item 3.14_4
+
+As noted by Michael, 127/8 should be 127.0.0.0/8 and not
+0.0.0.128/8. Also, improved docs on the usage of contains() and
+friends.
+
+=item 3.15
+
+Finally. Added POD tests (and fixed minor doc bug in IP.pm). As
+reported by Anand Vijay, negative numbers are assumed to be signed
+ints and converted accordingly to a v4 address. split() and nth() now
+work with IPv6 addresses (Thanks to Venkata Pingali for
+reporting). Tests were added for v6 base functionality and
+splitting. Also tests for bitwise aritmethic with long integers has
+been added. I'm afraid Math::BigInt is now required.
+
+Note that IPv6 might not be as solid as I would like. Be careful...
 
 =back
 
