@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# $Id: IP.pm,v 1.6 2002/12/10 17:14:02 lem Exp $
+# $Id: IP.pm,v 1.11 2003/02/12 00:09:57 lem Exp $
 
 package NetAddr::IP;
 
@@ -44,8 +44,13 @@ use Carp;
 use Socket;
 use strict;
 use warnings;
+require Exporter;
 
-our $VERSION = '3.14_1';
+our @EXPORT_OK = qw(Compact);
+
+our @ISA = qw(Exporter);
+
+our $VERSION = '3.14_3';
 
 				#############################################
 				# These are the overload methods, placed here
@@ -82,20 +87,18 @@ use overload
 	return 0 unless ref $_[1] eq 'NetAddr::IP';
 	$_[0]->cidr eq $_[1]->cidr;
     },
-				# The comparisons below are not portable
-				# when attempted with the full bit vector.
-				# This is why we break them down and do it
-				# one octet at a time. String comparison
-
-				# is not portable because of endianness.
 
     '>'		=> sub {
 	return undef unless $_[0]->{bits} == $_[1]->{bits};
+	return ($_[0]->numeric)[1] > ($_[1]->numeric)[1]
+	    if scalar($_[0]->numeric()) == scalar($_[1]->numeric());
 	return scalar($_[0]->numeric()) > scalar($_[1]->numeric());
     },
 
     '<'		=> sub {
 	return undef unless $_[0]->{bits} == $_[1]->{bits};
+	return ($_[0]->numeric)[1] < ($_[1]->numeric)[1]
+	    if scalar($_[0]->numeric()) == scalar($_[1]->numeric());
 	return scalar($_[0]->numeric()) < scalar($_[1]->numeric());
     },
 
@@ -112,12 +115,16 @@ use overload
     '<=>'		=> sub {
 
 	return undef unless $_[0]->{bits} == $_[1]->{bits};
+	return ($_[0]->numeric)[1] <=> ($_[1]->numeric)[1]
+	    if scalar($_[0]->numeric()) == scalar($_[1]->numeric());
 	return scalar($_[0]->numeric()) <=> scalar($_[1]->numeric());
     },
 
     'cmp'		=> sub {
 
 	return undef unless $_[0]->{bits} == $_[1]->{bits};
+	return ($_[0]->numeric)[1] <=> ($_[1]->numeric)[1]
+	    if scalar($_[0]->numeric()) == scalar($_[1]->numeric());
 	return scalar($_[0]->numeric()) <=> scalar($_[1]->numeric());
     },
 
@@ -461,19 +468,31 @@ sub _v4 ($$$) {
 	vec($addr, 0, 8) = 127;
 	vec($addr, 3, 8) = 1;
     }
-    elsif ($ip =~ m/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/) {
+    elsif ($ip =~ m/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/
+	   and $1 >= 0 and $1 <= 255
+	   and $2 >= 0 and $2 <= 255
+	   and $3 >= 0 and $3 <= 255
+	   and $4 >= 0 and $4 <= 255)
+    {
 	vec($addr, 0, 8) = $1;
 	vec($addr, 1, 8) = $2;
 	vec($addr, 2, 8) = $3;
 	vec($addr, 3, 8) = $4;
     }
-    elsif ($ip =~ m/^(\d+)\.(\d+)$/) {
+    elsif ($ip =~ m/^(\d+)\.(\d+)$/
+	   and $1 >= 0 and $1 <= 255
+	   and $2 >= 0 and $2 <= 255)
+    {
 	vec($addr, 0, 8) = $1;
 	vec($addr, 1, 8) = ($present ? $2 : 0);
 	vec($addr, 2, 8) = 0;
 	vec($addr, 3, 8) = ($present ? 0 : $2);
     }
-    elsif ($ip =~ m/^(\d+)\.(\d+)\.(\d+)$/) {
+    elsif ($ip =~ m/^(\d+)\.(\d+)\.(\d+)$/
+	   and $1 >= 0 and $1 <= 255
+	   and $2 >= 0 and $2 <= 255
+	   and $3 >= 0 and $3 <= 255)
+    {
 	vec($addr, 0, 8) = $1;
 	vec($addr, 1, 8) = $2;
 	vec($addr, 2, 8) = ($present ? $3 : 0);
@@ -907,6 +926,27 @@ sub masklen ($) {
 
 =pod
 
+=item C<-E<gt>bits()>
+
+Returns the wide of the address in bits. Normally 32 for v4 and 128 for v6.
+
+=cut
+
+sub bits { return $_[0]->{bits}; }
+
+=pod
+
+=item C<-E<gt>version()>
+
+Returns the version of the address or subnet. Currently this can be
+either 4 or 6.
+
+=cut
+
+sub version { return $_[0]->{bits} == 32 ? 4 : 6; }
+
+=pod
+
 =item C<-E<gt>cidr()>
 
 Returns a scalar with the address and mask in CIDR notation. A
@@ -1211,6 +1251,8 @@ sub compact {
     return @{compactref(\@_)};
 }
 
+*Compact = \&compact;
+
 =pod
 
 =item C<$me-E<gt>compactref(\@list)>
@@ -1222,10 +1264,8 @@ instead.
 =cut
 
 sub compactref ($) {
-    my @addr = sort 
-
-    @{$_[0]} or
-	return [];
+    my @addr = sort @{$_[0]} 
+    or return [];
 
     my $bits = $addr[0]->{bits};
     my $changed;
@@ -1245,7 +1285,7 @@ sub compactref ($) {
 		-- $i;
 	    }
 	    elsif (vec($lip->{mask}, 0, $bits) 
-		== vec($hip->{mask}, 0, $bits)) 
+		   == vec($hip->{mask}, 0, $bits)) 
 	    {
 		my $la = $lip->{addr};
 		my $ha = $hip->{addr};
@@ -1362,7 +1402,7 @@ None by default.
 
 =head1 HISTORY
 
-$Id: IP.pm,v 1.6 2002/12/10 17:14:02 lem Exp $
+$Id: IP.pm,v 1.11 2003/02/12 00:09:57 lem Exp $
 
 =over
 
@@ -1851,6 +1891,42 @@ can spell my name properly.
 Tested under Perl 5.8.0, no surprises found.
 
 =back
+
+=item 3.14_2
+
+Minor development release.
+
+=over
+
+=item *
+
+Added C<-E<gt>version> and C<-E<gt>bits>, including testing.
+
+=item *
+
+C<Compact> can now be exported if the user so requests.
+
+=item *
+
+Fixed a bug when octets in a dotted quad were > 256 (ie, were not
+octets). Thanks to Anton Berezin for pointing this out.
+
+=back
+
+=item 3.14_3
+
+Fixed a bug pointed out by Brent Imhoff related to the implicit
+comparison that happens within C<Compact()>. The netmask was being
+ignored in the comparison (ie, 10/8 was considered the same as
+10.0/16). Since some people have requested that 10.0/16 was considered
+larger than 10/8, I added this change, which makes the bug go
+away. This will be the last '_' release, pending new bugs.
+
+Regarding the comparison of subnets, I'm still open to debate so as to
+wether 10.0/16 > 10/8. Certainly 255.255.0.0 > 255.0.0.0, but 2 ** 24
+are more hosts than 2 ** 16. I think we might use gt & friends for
+this semantic and make everyone happy, but I won't do anything else
+here without (significant) feedback.
 
 =back
 

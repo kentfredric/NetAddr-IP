@@ -1,9 +1,9 @@
 use NetAddr::IP;
-#require "IP.pm";
 
-# $Id: v4-new.t,v 1.2 2002/10/31 04:30:36 lem Exp $
+# $Id: v4-new.t,v 1.5 2002/12/27 20:37:55 lem Exp $
 
-my @a = (
+BEGIN {
+our @a = (
 	 [ 'localhost', '127.0.0.1' ],
 	 [ 0x01010101, '1.1.1.1' ],
 	 [ 1, '0.0.0.1' ],
@@ -11,7 +11,7 @@ my @a = (
 	 [ 'any', '0.0.0.0' ],
 	);
 
-my @m = (
+our @m = (
 	 [ 0, '0.0.0.0' ],
 	 [ 1, '128.0.0.0' ],
 	 [ 2, '192.0.0.0' ],
@@ -28,33 +28,22 @@ my @m = (
 	 [ '255.255.128.0', '255.255.128.0' ],
 	 [ 0b11111111111111110000000000000000, '255.255.0.0' ],
 	 );
+};
 
-$| = 1;
+use Test::More tests => (4 * scalar @a * scalar @m) + 4;
 
-print '1..', (2 * scalar @a * scalar @m), "\n";
-
-my $count = 1;
+ok(! defined NetAddr::IP->new('256.1.1.1'), "Invalid IP returns undef");
+ok(! defined NetAddr::IP->new('256.256.1.1'), "Invalid IP returns undef");
+ok(! defined NetAddr::IP->new('256.256.256.1'), "Invalid IP returns undef");
+ok(! defined NetAddr::IP->new('256.256.256.256'), "Invalid IP returns undef");
 
 for my $a (@a) {
     for my $m (@m) {
 	my $ip = new NetAddr::IP $a->[0], $m->[0];
-	if ($ip->addr eq $a->[1]) {
-	    print "ok ", $count++, "\n";
-	}
-	else {
-	    print "not ok ", $count++, "\n";
-	}
-
-	if ($ip->mask eq $m->[1]) {
-	    print "ok ", $count++, "\n";
-	}
-	else {
-	    print "not ok ", $count++, "\n";
-	}
-
-#	print "mask=", $ip->mask, "\n";
-
+	is($ip->addr, $a->[1]);
+	is($ip->mask, $m->[1]);
+	is($ip->bits, 32);
+	is($ip->version, 4);
     }
 }
-
 

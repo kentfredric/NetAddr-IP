@@ -9,6 +9,7 @@ t/loops.t
 t/v4-new.t
 t/v4-num.t
 t/relops.t
+t/imhoff.t
 t/v4-aton.t
 t/v4-snew.t
 t/v4-cnew.t

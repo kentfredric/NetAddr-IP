@@ -1,11 +1,11 @@
 # This -*- perl -*- code excercises the basic v6 functionality
 
-# $Id: v6-base.t,v 1.2 2002/12/10 16:55:52 lem Exp $
+# $Id: v6-base.t,v 1.4 2002/12/17 05:09:50 lem Exp $
 
 BEGIN { our @addr = qw(:: ::1 f34::123/40 ); };
 
 use NetAddr::IP;
-use Test::More tests => 2 * @addr + 4;
+use Test::More tests => 4 * @addr + 4;
 
 my($a, $ip, $test);
 
@@ -14,6 +14,8 @@ for $a (@addr) {
 	$a =~ s,/\d+,,;
 	isa_ok($ip, 'NetAddr::IP');
 	is($ip->compact_addr, $a);
+	is($ip->bits, 128);
+	is($ip->version, 6);
 }
 
 $test = new NetAddr::IP f34::1;
